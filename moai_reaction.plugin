@@ -1,0 +1,152 @@
+import os
+import urllib.request
+from typing import Any
+
+from base_plugin import BasePlugin, HookResult
+from android_utils import log, run_on_ui_thread
+from client_utils import get_user_config, get_messages_controller, run_on_queue
+from file_utils import get_plugins_dir
+
+from android.media import AudioManager, MediaPlayer
+from android.content import Context
+from org.telegram.messenger import ApplicationLoader
+
+__id__ = "moai_reaction"
+__name__ = "Moai Reaction Sound"
+__description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
+__author__ = "mikhail"
+__version__ = "1.0.0"
+__icon__ = "DMJDuckX2/15"
+__min_version__ = "11.12.0"
+
+
+MOAI_EMOJI = "🗿"
+SOUND_DIR = os.path.join(get_plugins_dir(), "moai_reaction")
+SOUND_FILE = os.path.join(SOUND_DIR, "sound.mp3")
+SOUND_URL = "https://github.com/mburkasov/moai/releases/latest/download/sound.mp3"
+
+
+def _play_sound():
+    try:
+        context = ApplicationLoader.applicationContext
+        audio_manager = context.getSystemService(Context.AUDIO_SERVICE)
+
+        # Set media stream to max volume
+        max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audio_manager.setStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            max_vol,
+            0  # no UI flags
+        )
+
+        player = MediaPlayer()
+        player.setAudioStreamType(AudioManager.STREAM_MUSIC)
+        player.setDataSource(SOUND_FILE)
+        player.prepare()
+        player.setVolume(1.0, 1.0)
+        player.start()
+
+        # Release player when done
+        def on_complete(mp):
+            mp.release()
+
+        player.setOnCompletionListener(on_complete)
+        log("MoaiReaction: played sound")
+    except Exception as e:
+        log(f"MoaiReaction: failed to play sound — {e}")
+
+
+class MoaiReactionPlugin(BasePlugin):
+
+    def on_plugin_load(self):
+        self.add_hook("TL_updateMessageReactions")
+        self._my_id = None
+        if not os.path.exists(SOUND_FILE):
+            run_on_queue(self._download_sound)
+        log("MoaiReaction: loaded")
+
+    def _download_sound(self):
+        try:
+            os.makedirs(SOUND_DIR, exist_ok=True)
+            log(f"MoaiReaction: downloading sound from {SOUND_URL}")
+            urllib.request.urlretrieve(SOUND_URL, SOUND_FILE)
+            log("MoaiReaction: sound downloaded successfully")
+        except Exception as e:
+            log(f"MoaiReaction: failed to download sound — {e}")
+
+    def _get_my_id(self, account: int) -> int:
+        if self._my_id is None:
+            try:
+                uc = get_user_config(account)
+                self._my_id = uc.getClientUserId()
+            except Exception:
+                pass
+        return self._my_id
+
+    def _has_moai(self, reactions) -> bool:
+        """Return True if the reactions object contains a 🗿 emoji reaction."""
+        try:
+            results = reactions.results
+            if results is None:
+                return False
+            for reaction_count in results:
+                reaction = reaction_count.reaction
+                if getattr(reaction, "emoticon", None) == MOAI_EMOJI:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _is_my_message(self, account: int, msg_id: int, peer) -> bool:
+        """Check if the message with msg_id was sent by the current user."""
+        try:
+            my_id = self._get_my_id(account)
+            if not my_id:
+                return False
+
+            controller = get_messages_controller(account)
+
+            # dialogMessagesByIds maps message id -> MessageObject
+            # It holds the most recent messages per dialog (cached in memory).
+            msg_obj = controller.dialogMessagesByIds.get(msg_id)
+            if msg_obj is not None:
+                sender_id = getattr(msg_obj.messageOwner, "from_id", None)
+                if sender_id is not None:
+                    # from_id is a Peer; for users it's TL_peerUser with user_id field
+                    uid = getattr(sender_id, "user_id", None)
+                    if uid is not None:
+                        return int(uid) == int(my_id)
+
+            # Fallback: the message peer itself is us (e.g. Saved Messages / self-chat)
+            if peer is not None:
+                peer_user_id = getattr(peer, "user_id", None)
+                if peer_user_id is not None and int(peer_user_id) == int(my_id):
+                    return True
+
+        except Exception as e:
+            log(f"MoaiReaction: _is_my_message error — {e}")
+
+        return False
+
+    def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
+        if update_name != "TL_updateMessageReactions":
+            return HookResult()
+
+        try:
+            reactions = update.reactions
+            if reactions is None:
+                return HookResult()
+
+            if not self._has_moai(reactions):
+                return HookResult()
+
+            msg_id = getattr(update, "msg_id", None)
+            peer = getattr(update, "peer", None)
+
+            if msg_id is not None and self._is_my_message(account, msg_id, peer):
+                run_on_ui_thread(_play_sound)
+
+        except Exception as e:
+            log(f"MoaiReaction: error in update hook — {e}")
+
+        return HookResult()
