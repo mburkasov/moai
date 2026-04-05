@@ -80,8 +80,8 @@ class MoaiReactionPlugin(BasePlugin):
             results = reactions.results
             if results is None:
                 return False
-            for reaction_count in results:
-                reaction = reaction_count.reaction
+            for i in range(results.size()):
+                reaction = results.get(i).reaction
                 if getattr(reaction, "emoticon", None) == MOAI_EMOJI:
                     return True
         except Exception:
@@ -101,7 +101,8 @@ class MoaiReactionPlugin(BasePlugin):
             results = reactions.results
             log(f"MoaiReaction: got reaction update, results={results}")
             if results:
-                for rc in results:
+                for i in range(results.size()):
+                    rc = results.get(i)
                     log(f"MoaiReaction: reaction={rc.reaction}, emoticon={getattr(rc.reaction, 'emoticon', 'N/A')}")
 
             if self._has_moai(reactions):
