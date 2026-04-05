@@ -4,7 +4,7 @@ from typing import Any
 
 from base_plugin import BasePlugin, HookResult
 from android_utils import log, run_on_ui_thread
-from client_utils import get_user_config, get_messages_controller, run_on_queue
+from client_utils import run_on_queue
 from file_utils import get_plugins_dir
 
 from android.media import AudioManager, MediaPlayer
@@ -61,7 +61,6 @@ class MoaiReactionPlugin(BasePlugin):
     def on_plugin_load(self):
         self.add_hook("TL_updateMessageReactions")
         self.add_hook("update", match_substring=True)  # catch-all to see all update names
-        self._my_id = None
         if not os.path.exists(SOUND_FILE):
             run_on_queue(self._download_sound)
         log("MoaiReaction: loaded")
@@ -74,15 +73,6 @@ class MoaiReactionPlugin(BasePlugin):
             log("MoaiReaction: sound downloaded successfully")
         except Exception as e:
             log(f"MoaiReaction: failed to download sound — {e}")
-
-    def _get_my_id(self, account: int) -> int:
-        if self._my_id is None:
-            try:
-                uc = get_user_config(account)
-                self._my_id = uc.getClientUserId()
-            except Exception:
-                pass
-        return self._my_id
 
     def _has_moai(self, reactions) -> bool:
         """Return True if the reactions object contains a 🗿 emoji reaction."""
@@ -98,37 +88,6 @@ class MoaiReactionPlugin(BasePlugin):
             pass
         return False
 
-    def _is_my_message(self, account: int, msg_id: int, peer) -> bool:
-        """Check if the message with msg_id was sent by the current user."""
-        try:
-            my_id = self._get_my_id(account)
-            if not my_id:
-                return False
-
-            controller = get_messages_controller(account)
-
-            # dialogMessagesByIds maps message id -> MessageObject
-            # It holds the most recent messages per dialog (cached in memory).
-            msg_obj = controller.dialogMessagesByIds.get(msg_id)
-            if msg_obj is not None:
-                sender_id = getattr(msg_obj.messageOwner, "from_id", None)
-                if sender_id is not None:
-                    # from_id is a Peer; for users it's TL_peerUser with user_id field
-                    uid = getattr(sender_id, "user_id", None)
-                    if uid is not None:
-                        return int(uid) == int(my_id)
-
-            # Fallback: the message peer itself is us (e.g. Saved Messages / self-chat)
-            if peer is not None:
-                peer_user_id = getattr(peer, "user_id", None)
-                if peer_user_id is not None and int(peer_user_id) == int(my_id):
-                    return True
-
-        except Exception as e:
-            log(f"MoaiReaction: _is_my_message error — {e}")
-
-        return False
-
     def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
         log(f"MoaiReaction: update — {update_name}")
         if update_name != "TL_updateMessageReactions":
@@ -139,13 +98,7 @@ class MoaiReactionPlugin(BasePlugin):
             if reactions is None:
                 return HookResult()
 
-            if not self._has_moai(reactions):
-                return HookResult()
-
-            msg_id = getattr(update, "msg_id", None)
-            peer = getattr(update, "peer", None)
-
-            if msg_id is not None and self._is_my_message(account, msg_id, peer):
+            if self._has_moai(reactions):
                 run_on_ui_thread(_play_sound)
 
         except Exception as e:
