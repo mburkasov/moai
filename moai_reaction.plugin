@@ -3,7 +3,7 @@ import urllib.request
 
 from base_plugin import BasePlugin, HookResult, MethodHook
 from android_utils import log, run_on_ui_thread
-from client_utils import run_on_queue, get_messages_controller
+from client_utils import run_on_queue
 from file_utils import get_plugins_dir
 from hook_utils import find_class
 from ui.settings import Switch, Header, Divider
@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Sounds"
 __description__ = "Plays sounds for 🗿 reactions and messages containing 🗿"
 __author__ = "mikhail"
-__version__ = "1.5.6"
+__version__ = "1.6.0"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -69,9 +69,64 @@ class MoaiReactionPlugin(BasePlugin):
         if not os.path.exists(MESSAGE_SOUND_FILE):
             run_on_queue(lambda: self._download_sound(MESSAGE_SOUND_URL, MESSAGE_SOUND_FILE))
         self._hook_reaction_overlay()
-        self.add_hook("TL_updateNewMessage")
-        self.add_hook("TL_updateNewChannelMessage")
+        self._seen_msg_ids = set()
+        self._hook_message_cell()
         log("MoaiReaction: loaded")
+
+    def _hook_message_cell(self):
+        try:
+            cell_cls = find_class("org.telegram.ui.Cells.ChatMessageCell")
+            if cell_cls is None:
+                log("MoaiReaction: ChatMessageCell not found")
+                return
+
+            methods = cell_cls.getClass().getDeclaredMethods()
+            target = None
+            for m in methods:
+                if m.getName() == "setVisibleOnScreen":
+                    target = m
+                    break
+
+            if target is None:
+                log("MoaiReaction: setVisibleOnScreen not found")
+                return
+
+            plugin = self
+
+            class CellVisibleHook(MethodHook):
+                def before_hooked_method(self, param):
+                    try:
+                        visible = param.args[0]
+                        if not visible:
+                            return
+                        cell = param.thisObject
+                        msg_obj = cell.getMessageObject()
+                        if msg_obj is None:
+                            return
+                        msg = msg_obj.messageOwner
+                        msg_id = int(msg.id)
+                        if msg_id in plugin._seen_msg_ids:
+                            return
+                        plugin._seen_msg_ids.add(msg_id)
+                        if not plugin.get_setting("play_on_message", True):
+                            return
+                        text = getattr(msg, "message", "") or ""
+                        if MOAI_EMOJI not in text:
+                            return
+                        # Skip own messages unless setting enabled
+                        is_own = getattr(msg, "out", False)
+                        if is_own and not plugin.get_setting("play_on_own_message", False):
+                            return
+                        force_max = plugin.get_setting("force_max_volume", True)
+                        run_on_ui_thread(lambda: _play_sound(MESSAGE_SOUND_FILE, force_max))
+                    except Exception as e:
+                        log(f"MoaiReaction: CellVisibleHook error — {e}")
+
+            self.hook_method(target, CellVisibleHook())
+            log("MoaiReaction: hooked ChatMessageCell.setVisibleOnScreen()")
+
+        except Exception as e:
+            log(f"MoaiReaction: cell hook error — {e}")
 
     def _hook_reaction_overlay(self):
         try:
@@ -156,59 +211,4 @@ class MoaiReactionPlugin(BasePlugin):
         except Exception as e:
             log(f"MoaiReaction: failed to download {os.path.basename(path)} — {e}")
 
-    def _is_own_message(self, message, account: int) -> bool:
-        try:
-            from client_utils import get_user_config
-            my_id = get_user_config(account).getClientUserId()
-            from_id = getattr(message, "from_id", None)
-            if from_id is not None:
-                return int(getattr(from_id, "user_id", -1)) == int(my_id)
-            # In private chats from_id may be absent; peer_id points to the other user
-            peer_id = getattr(message, "peer_id", None)
-            if peer_id is not None:
-                return int(getattr(peer_id, "user_id", -1)) == int(my_id)
-        except Exception:
-            pass
-        return False
 
-    def _get_dialog_id(self, message) -> int:
-        msg_peer = getattr(message, "peer_id", None)
-        if msg_peer is None:
-            return 0
-        channel_id = getattr(msg_peer, "channel_id", 0) or 0
-        chat_id = getattr(msg_peer, "chat_id", 0) or 0
-        user_id = getattr(msg_peer, "user_id", 0) or 0
-        if channel_id:
-            return -channel_id
-        elif chat_id:
-            return -chat_id
-        return user_id
-
-    def on_update_hook(self, update_name: str, account: int, update) -> HookResult:
-        if update_name not in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
-            return HookResult()
-        if not self.get_setting("play_on_message", True):
-            return HookResult()
-        try:
-            message = update.message
-            text = getattr(message, "message", "") or ""
-            if MOAI_EMOJI not in text:
-                return HookResult()
-
-            dialog_id = self._get_dialog_id(message)
-            if dialog_id == 0:
-                return HookResult()
-
-            # Skip muted/archived dialogs
-            controller = get_messages_controller(account)
-            if controller.isDialogMuted(dialog_id, 0):
-                return HookResult()
-
-            is_own = self._is_own_message(message, account)
-            if is_own and not self.get_setting("play_on_own_message", False):
-                return HookResult()
-            force_max = self.get_setting("force_max_volume", True)
-            run_on_ui_thread(lambda: _play_sound(MESSAGE_SOUND_FILE, force_max))
-        except Exception as e:
-            log(f"MoaiReaction: message hook error — {e}")
-        return HookResult()
