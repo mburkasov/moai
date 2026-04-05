@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
 __description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
 __author__ = "mikhail"
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -73,7 +73,8 @@ class MoaiReactionPlugin(BasePlugin):
             Switch(
                 key="force_max_volume",
                 text="Force max volume",
-                description="Temporarily set volume to max when playing, then restore it",
+                subtext="Temporarily set volume to max when playing, then restore it",
+                icon="msg_tone",
                 default=True,
             ),
         ]
