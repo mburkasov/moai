@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
 __description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
 __author__ = "mikhail"
-__version__ = "1.1.5"
+__version__ = "1.2.0"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -103,7 +103,12 @@ class MoaiReactionPlugin(BasePlugin):
                                 log(f"MoaiReaction: field {f.getName()} = {f.get(reaction)}")
                             except Exception:
                                 pass
+                        is_own = param.args[8] == 2  # best guess, need to verify from logs
+                        log(f"MoaiReaction: is_own guess (arg[8]==2) = {is_own}")
                         if str(reaction) == MOAI_EMOJI:
+                            play_own = plugin.get_setting("play_on_own_reaction", False)
+                            if is_own and not play_own:
+                                return
                             force_max = plugin.get_setting("force_max_volume", True)
                             run_on_ui_thread(lambda: _play_sound(force_max))
                     except Exception as e:
@@ -130,6 +135,13 @@ class MoaiReactionPlugin(BasePlugin):
                 subtext="Temporarily set volume to max when playing, then restore it",
                 icon="msg_tone",
                 default=True,
+            ),
+            Switch(
+                key="play_on_own_reaction",
+                text="Play for own reactions",
+                subtext="Also play the sound when you react with 🗿 yourself",
+                icon="msg_smile",
+                default=False,
             ),
         ]
 
