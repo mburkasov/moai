@@ -6,7 +6,6 @@ from android_utils import log, run_on_ui_thread
 from client_utils import run_on_queue
 from file_utils import get_plugins_dir
 from hook_utils import find_class
-from java import jclass
 from ui.settings import Switch, Header
 
 from android.media import AudioManager, MediaPlayer
@@ -18,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
 __description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
 __author__ = "mikhail"
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -75,9 +74,7 @@ class MoaiReactionPlugin(BasePlugin):
                 self._setup_update_hook()
                 return
 
-            # Use jclass to get the raw Java Class and iterate its declared methods
-            java_cls = jclass("org.telegram.ui.Components.Reactions.ReactionsEffectOverlay")
-            methods = java_cls.class_.getDeclaredMethods()
+            methods = overlay_cls.getClass().getDeclaredMethods()
             show_method = None
             for m in methods:
                 if m.getName() == "show":
