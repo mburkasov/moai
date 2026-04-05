@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
 __description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
 __author__ = "mikhail"
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -91,20 +91,8 @@ class MoaiReactionPlugin(BasePlugin):
             class ShowHook(MethodHook):
                 def before_hooked_method(self, param):
                     try:
-                        log(f"MoaiReaction: show() fired, args count={len(param.args)}")
-                        for i, arg in enumerate(param.args):
-                            log(f"MoaiReaction: arg[{i}] = {arg} (type={type(arg).__name__})")
                         reaction = param.args[6]
-                        log(f"MoaiReaction: reaction={reaction}, str={str(reaction)}")
-                        # Inspect all fields via Java reflection
-                        for f in reaction.getClass().getDeclaredFields():
-                            f.setAccessible(True)
-                            try:
-                                log(f"MoaiReaction: field {f.getName()} = {f.get(reaction)}")
-                            except Exception:
-                                pass
-                        is_own = param.args[8] == 2  # best guess, need to verify from logs
-                        log(f"MoaiReaction: is_own guess (arg[8]==2) = {is_own}")
+                        is_own = param.args[8] == 2
                         if str(reaction) == MOAI_EMOJI:
                             play_own = plugin.get_setting("play_on_own_reaction", False)
                             if is_own and not play_own:
