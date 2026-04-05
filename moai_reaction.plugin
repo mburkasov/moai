@@ -3,7 +3,7 @@ import urllib.request
 
 from base_plugin import BasePlugin, HookResult, MethodHook
 from android_utils import log, run_on_ui_thread
-from client_utils import run_on_queue, get_last_fragment
+from client_utils import run_on_queue, get_messages_controller
 from file_utils import get_plugins_dir
 from hook_utils import find_class
 from ui.settings import Switch, Header, Divider
@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Sounds"
 __description__ = "Plays sounds for 🗿 reactions and messages containing 🗿"
 __author__ = "mikhail"
-__version__ = "1.5.5"
+__version__ = "1.5.6"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -71,7 +71,6 @@ class MoaiReactionPlugin(BasePlugin):
         self._hook_reaction_overlay()
         self.add_hook("TL_updateNewMessage")
         self.add_hook("TL_updateNewChannelMessage")
-        self.add_hook("update", match_substring=True)  # catch-all for debugging
         log("MoaiReaction: loaded")
 
     def _hook_reaction_overlay(self):
@@ -172,8 +171,20 @@ class MoaiReactionPlugin(BasePlugin):
             pass
         return False
 
+    def _get_dialog_id(self, message) -> int:
+        msg_peer = getattr(message, "peer_id", None)
+        if msg_peer is None:
+            return 0
+        channel_id = getattr(msg_peer, "channel_id", 0) or 0
+        chat_id = getattr(msg_peer, "chat_id", 0) or 0
+        user_id = getattr(msg_peer, "user_id", 0) or 0
+        if channel_id:
+            return -channel_id
+        elif chat_id:
+            return -chat_id
+        return user_id
+
     def on_update_hook(self, update_name: str, account: int, update) -> HookResult:
-        log(f"MoaiReaction: update — {update_name}")
         if update_name not in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
             return HookResult()
         if not self.get_setting("play_on_message", True):
@@ -184,28 +195,13 @@ class MoaiReactionPlugin(BasePlugin):
             if MOAI_EMOJI not in text:
                 return HookResult()
 
-            # Only play for the currently open chat
-            fragment = get_last_fragment()
-            if fragment is None:
+            dialog_id = self._get_dialog_id(message)
+            if dialog_id == 0:
                 return HookResult()
-            from org.telegram.ui import ChatActivity
-            if not isinstance(fragment, ChatActivity):
-                return HookResult()
-            open_dialog_id = fragment.getDialogId()
-            msg_peer = getattr(message, "peer_id", None)
-            if msg_peer is None:
-                return HookResult()
-            # Compute dialog id from peer
-            chat_id = getattr(msg_peer, "chat_id", 0) or 0
-            channel_id = getattr(msg_peer, "channel_id", 0) or 0
-            user_id = getattr(msg_peer, "user_id", 0) or 0
-            if channel_id:
-                msg_dialog_id = -channel_id
-            elif chat_id:
-                msg_dialog_id = -chat_id
-            else:
-                msg_dialog_id = user_id
-            if int(open_dialog_id) != int(msg_dialog_id):
+
+            # Skip muted/archived dialogs
+            controller = get_messages_controller(account)
+            if controller.isDialogMuted(dialog_id, 0):
                 return HookResult()
 
             is_own = self._is_own_message(message, account)
