@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
 __description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
 __author__ = "mikhail"
-__version__ = "1.1.4"
+__version__ = "1.1.5"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -95,9 +95,15 @@ class MoaiReactionPlugin(BasePlugin):
                         for i, arg in enumerate(param.args):
                             log(f"MoaiReaction: arg[{i}] = {arg} (type={type(arg).__name__})")
                         reaction = param.args[6]
-                        emoticon = getattr(reaction, "emoticon", None)
-                        log(f"MoaiReaction: reaction={reaction}, emoticon={emoticon}")
-                        if emoticon == MOAI_EMOJI:
+                        log(f"MoaiReaction: reaction={reaction}, str={str(reaction)}")
+                        # Inspect all fields via Java reflection
+                        for f in reaction.getClass().getDeclaredFields():
+                            f.setAccessible(True)
+                            try:
+                                log(f"MoaiReaction: field {f.getName()} = {f.get(reaction)}")
+                            except Exception:
+                                pass
+                        if str(reaction) == MOAI_EMOJI:
                             force_max = plugin.get_setting("force_max_volume", True)
                             run_on_ui_thread(lambda: _play_sound(force_max))
                     except Exception as e:
