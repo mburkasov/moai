@@ -6,7 +6,7 @@ from android_utils import log, run_on_ui_thread
 from client_utils import run_on_queue
 from file_utils import get_plugins_dir
 from hook_utils import find_class
-from ui.settings import Switch, Header
+from ui.settings import Switch, Header, Divider
 
 from android.media import AudioManager, MediaPlayer
 from android.content import Context
@@ -14,21 +14,23 @@ from org.telegram.messenger import ApplicationLoader
 from java import dynamic_proxy
 
 __id__ = "moai_reaction"
-__name__ = "Moai Reaction Sound"
-__description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
+__name__ = "Moai Sounds"
+__description__ = "Plays sounds for 🗿 reactions and messages containing 🗿"
 __author__ = "mikhail"
-__version__ = "1.4.1"
+__version__ = "1.5.0"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
 
 MOAI_EMOJI = "🗿"
 SOUND_DIR = os.path.join(get_plugins_dir(), "moai_reaction")
-SOUND_FILE = os.path.join(SOUND_DIR, "sound.mp3")
-SOUND_URL = "https://github.com/mburkasov/moai/releases/latest/download/sound.mp3"
+REACTION_SOUND_FILE = os.path.join(SOUND_DIR, "sound.mp3")
+MESSAGE_SOUND_FILE = os.path.join(SOUND_DIR, "moving-stone.mp3")
+REACTION_SOUND_URL = "https://github.com/mburkasov/moai/releases/latest/download/sound.mp3"
+MESSAGE_SOUND_URL = "https://github.com/mburkasov/moai/releases/latest/download/moving-stone.mp3"
 
 
-def _play_sound(force_max_volume: bool):
+def _play_sound(sound_file: str, force_max_volume: bool):
     try:
         context = ApplicationLoader.applicationContext
         audio_manager = context.getSystemService(Context.AUDIO_SERVICE)
@@ -41,7 +43,7 @@ def _play_sound(force_max_volume: bool):
 
         player = MediaPlayer()
         player.setAudioStreamType(AudioManager.STREAM_MUSIC)
-        player.setDataSource(SOUND_FILE)
+        player.setDataSource(sound_file)
         player.prepare()
         player.setVolume(1.0, 1.0)
 
@@ -53,7 +55,7 @@ def _play_sound(force_max_volume: bool):
 
         player.setOnCompletionListener(OnComplete())
         player.start()
-        log("MoaiReaction: played sound")
+        log(f"MoaiReaction: played {os.path.basename(sound_file)}")
     except Exception as e:
         log(f"MoaiReaction: failed to play sound — {e}")
 
@@ -61,9 +63,14 @@ def _play_sound(force_max_volume: bool):
 class MoaiReactionPlugin(BasePlugin):
 
     def on_plugin_load(self):
-        if not os.path.exists(SOUND_FILE):
-            run_on_queue(self._download_sound)
+        os.makedirs(SOUND_DIR, exist_ok=True)
+        if not os.path.exists(REACTION_SOUND_FILE):
+            run_on_queue(lambda: self._download_sound(REACTION_SOUND_URL, REACTION_SOUND_FILE))
+        if not os.path.exists(MESSAGE_SOUND_FILE):
+            run_on_queue(lambda: self._download_sound(MESSAGE_SOUND_URL, MESSAGE_SOUND_FILE))
         self._hook_reaction_overlay()
+        self.add_hook("TL_updateNewMessage")
+        self.add_hook("TL_updateNewChannelMessage")
         log("MoaiReaction: loaded")
 
     def _hook_reaction_overlay(self):
@@ -92,12 +99,11 @@ class MoaiReactionPlugin(BasePlugin):
                         reaction = param.args[6]
                         if str(reaction) != MOAI_EMOJI:
                             return
-                        log(f"MoaiReaction: show() arg[7]={param.args[7]} arg[8]={param.args[8]}")
                         is_own = param.args[8] == 2
                         if is_own and not plugin.get_setting("play_on_own_reaction", False):
                             return
                         force_max = plugin.get_setting("force_max_volume", True)
-                        run_on_ui_thread(lambda: _play_sound(force_max))
+                        run_on_ui_thread(lambda: _play_sound(REACTION_SOUND_FILE, force_max))
                     except Exception as e:
                         log(f"MoaiReaction: ShowHook error — {e}")
 
@@ -109,7 +115,7 @@ class MoaiReactionPlugin(BasePlugin):
 
     def create_settings(self):
         return [
-            Header(text="Moai Reaction Sound"),
+            Header(text="🗿 Reaction Sound"),
             Switch(
                 key="force_max_volume",
                 text="Force max volume",
@@ -120,17 +126,66 @@ class MoaiReactionPlugin(BasePlugin):
             Switch(
                 key="play_on_own_reaction",
                 text="Play for own reactions",
-                subtext="Also play the sound when you react with 🗿 yourself",
+                subtext="Also play when you react with 🗿 yourself",
+                icon="msg_smile",
+                default=False,
+            ),
+            Divider(),
+            Header(text="🗿 Message Sound"),
+            Switch(
+                key="play_on_message",
+                text="Play on 🗿 messages",
+                subtext="Play moving-stone.mp3 when someone sends a message containing 🗿",
+                icon="msg_send",
+                default=True,
+            ),
+            Switch(
+                key="play_on_own_message",
+                text="Play for own messages",
+                subtext="Also play when you send a 🗿 message yourself",
                 icon="msg_smile",
                 default=False,
             ),
         ]
 
-    def _download_sound(self):
+    def _download_sound(self, url: str, path: str):
         try:
-            os.makedirs(SOUND_DIR, exist_ok=True)
-            log(f"MoaiReaction: downloading sound from {SOUND_URL}")
-            urllib.request.urlretrieve(SOUND_URL, SOUND_FILE)
-            log("MoaiReaction: sound downloaded successfully")
+            log(f"MoaiReaction: downloading {os.path.basename(path)}")
+            urllib.request.urlretrieve(url, path)
+            log(f"MoaiReaction: downloaded {os.path.basename(path)}")
         except Exception as e:
-            log(f"MoaiReaction: failed to download sound — {e}")
+            log(f"MoaiReaction: failed to download {os.path.basename(path)} — {e}")
+
+    def _is_own_message(self, message, account: int) -> bool:
+        try:
+            from client_utils import get_user_config
+            my_id = get_user_config(account).getClientUserId()
+            from_id = getattr(message, "from_id", None)
+            if from_id is not None:
+                return int(getattr(from_id, "user_id", -1)) == int(my_id)
+            # In private chats from_id may be absent; peer_id points to the other user
+            peer_id = getattr(message, "peer_id", None)
+            if peer_id is not None:
+                return int(getattr(peer_id, "user_id", -1)) == int(my_id)
+        except Exception:
+            pass
+        return False
+
+    def on_update_hook(self, update_name: str, account: int, update) -> HookResult:
+        if update_name not in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
+            return HookResult()
+        if not self.get_setting("play_on_message", True):
+            return HookResult()
+        try:
+            message = update.message
+            text = getattr(message, "message", "") or ""
+            if MOAI_EMOJI not in text:
+                return HookResult()
+            is_own = self._is_own_message(message, account)
+            if is_own and not self.get_setting("play_on_own_message", False):
+                return HookResult()
+            force_max = self.get_setting("force_max_volume", True)
+            run_on_ui_thread(lambda: _play_sound(MESSAGE_SOUND_FILE, force_max))
+        except Exception as e:
+            log(f"MoaiReaction: message hook error — {e}")
+        return HookResult()
