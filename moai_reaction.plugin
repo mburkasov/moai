@@ -1,4 +1,5 @@
 import os
+import time
 import urllib.request
 
 from base_plugin import BasePlugin, HookResult, MethodHook
@@ -17,7 +18,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
 __description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
 __author__ = "mikhail"
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -26,6 +27,8 @@ MOAI_EMOJI = "🗿"
 SOUND_DIR = os.path.join(get_plugins_dir(), "moai_reaction")
 SOUND_FILE = os.path.join(SOUND_DIR, "sound.mp3")
 SOUND_URL = "https://github.com/mburkasov/moai/releases/latest/download/sound.mp3"
+# If update hook played within this window, animation hook won't double-fire
+DEDUP_WINDOW = 1.5
 
 
 def _play_sound(force_max_volume: bool):
@@ -61,17 +64,23 @@ def _play_sound(force_max_volume: bool):
 class MoaiReactionPlugin(BasePlugin):
 
     def on_plugin_load(self):
+        # Always use update hook as the primary trigger (works in background too)
+        self.add_hook("TL_updateMessageReactions")
+        self._moai_counts = {}
+        self._last_played = 0.0  # timestamp of last play, for dedup
+
         if not os.path.exists(SOUND_FILE):
             run_on_queue(self._download_sound)
+
         self._hook_reaction_overlay()
         log("MoaiReaction: loaded")
 
     def _hook_reaction_overlay(self):
+        """Hook the animation so own-reaction detection works via arg[8]."""
         try:
             overlay_cls = find_class("org.telegram.ui.Components.Reactions.ReactionsEffectOverlay")
             if overlay_cls is None:
-                log("MoaiReaction: ReactionsEffectOverlay not found, falling back to update hook")
-                self._setup_update_hook()
+                log("MoaiReaction: ReactionsEffectOverlay not found")
                 return
 
             methods = overlay_cls.getClass().getDeclaredMethods()
@@ -82,8 +91,7 @@ class MoaiReactionPlugin(BasePlugin):
                     break
 
             if show_method is None:
-                log("MoaiReaction: show() method not found, falling back to update hook")
-                self._setup_update_hook()
+                log("MoaiReaction: show() not found")
                 return
 
             plugin = self
@@ -92,13 +100,21 @@ class MoaiReactionPlugin(BasePlugin):
                 def before_hooked_method(self, param):
                     try:
                         reaction = param.args[6]
+                        if str(reaction) != MOAI_EMOJI:
+                            return
+
                         is_own = param.args[8] == 2
-                        if str(reaction) == MOAI_EMOJI:
-                            play_own = plugin.get_setting("play_on_own_reaction", False)
-                            if is_own and not play_own:
-                                return
-                            force_max = plugin.get_setting("force_max_volume", True)
-                            run_on_ui_thread(lambda: _play_sound(force_max))
+                        play_own = plugin.get_setting("play_on_own_reaction", False)
+                        if is_own and not play_own:
+                            return
+
+                        # Dedup: update hook may have already played within DEDUP_WINDOW
+                        if time.time() - plugin._last_played < DEDUP_WINDOW:
+                            return
+
+                        plugin._last_played = time.time()
+                        force_max = plugin.get_setting("force_max_volume", True)
+                        run_on_ui_thread(lambda: _play_sound(force_max))
                     except Exception as e:
                         log(f"MoaiReaction: ShowHook error — {e}")
 
@@ -106,13 +122,7 @@ class MoaiReactionPlugin(BasePlugin):
             log("MoaiReaction: hooked ReactionsEffectOverlay.show()")
 
         except Exception as e:
-            log(f"MoaiReaction: hook setup error — {e}, falling back to update hook")
-            self._setup_update_hook()
-
-    def _setup_update_hook(self):
-        """Fallback: use TL update hook with count-based deduplication."""
-        self.add_hook("TL_updateMessageReactions")
-        self._moai_counts = {}
+            log(f"MoaiReaction: overlay hook error — {e}")
 
     def create_settings(self):
         return [
@@ -142,7 +152,6 @@ class MoaiReactionPlugin(BasePlugin):
         except Exception as e:
             log(f"MoaiReaction: failed to download sound — {e}")
 
-    # Fallback update hook (only active if ReactionsEffectOverlay hook failed)
     def _get_moai_count(self, reactions) -> int:
         try:
             results = reactions.results
@@ -163,17 +172,20 @@ class MoaiReactionPlugin(BasePlugin):
             reactions = update.reactions
             if reactions is None:
                 return HookResult()
+
             msg_id = int(update.msg_id)
             new_count = self._get_moai_count(reactions)
-            counts = getattr(self, "_moai_counts", None)
-            if counts is None:
+
+            if msg_id not in self._moai_counts:
+                self._moai_counts[msg_id] = new_count
                 return HookResult()
-            if msg_id not in counts:
-                counts[msg_id] = new_count
-            elif new_count > counts[msg_id]:
-                counts[msg_id] = new_count
+
+            if new_count > self._moai_counts[msg_id]:
+                self._moai_counts[msg_id] = new_count
+                self._last_played = time.time()
                 force_max = self.get_setting("force_max_volume", True)
                 run_on_ui_thread(lambda: _play_sound(force_max))
+
         except Exception as e:
             log(f"MoaiReaction: update hook error — {e}")
         return HookResult()
