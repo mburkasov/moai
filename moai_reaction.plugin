@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Sounds"
 __description__ = "Plays sounds for 🗿 reactions and messages containing 🗿"
 __author__ = "mikhail"
-__version__ = "1.5.4"
+__version__ = "1.5.5"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -71,6 +71,7 @@ class MoaiReactionPlugin(BasePlugin):
         self._hook_reaction_overlay()
         self.add_hook("TL_updateNewMessage")
         self.add_hook("TL_updateNewChannelMessage")
+        self.add_hook("update", match_substring=True)  # catch-all for debugging
         log("MoaiReaction: loaded")
 
     def _hook_reaction_overlay(self):
@@ -172,6 +173,7 @@ class MoaiReactionPlugin(BasePlugin):
         return False
 
     def on_update_hook(self, update_name: str, account: int, update) -> HookResult:
+        log(f"MoaiReaction: update — {update_name}")
         if update_name not in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
             return HookResult()
         if not self.get_setting("play_on_message", True):
