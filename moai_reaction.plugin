@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Sounds"
 __description__ = "Plays sounds for 🗿 reactions and messages containing 🗿"
 __author__ = "mikhail"
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -174,18 +174,11 @@ class MoaiReactionPlugin(BasePlugin):
     def on_update_hook(self, update_name: str, account: int, update) -> HookResult:
         if update_name not in ("TL_updateNewMessage", "TL_updateNewChannelMessage"):
             return HookResult()
-        if not self.get_setting("play_on_message", True):
-            return HookResult()
         try:
+            log(f"MoaiReaction: new message update — {update_name}, update={update}, message={getattr(update, 'message', None)}")
             message = update.message
             text = getattr(message, "message", "") or ""
-            if MOAI_EMOJI not in text:
-                return HookResult()
-            is_own = self._is_own_message(message, account)
-            if is_own and not self.get_setting("play_on_own_message", False):
-                return HookResult()
-            force_max = self.get_setting("force_max_volume", True)
-            run_on_ui_thread(lambda: _play_sound(MESSAGE_SOUND_FILE, force_max))
+            log(f"MoaiReaction: message text={repr(text)}")
         except Exception as e:
             log(f"MoaiReaction: message hook error — {e}")
         return HookResult()
