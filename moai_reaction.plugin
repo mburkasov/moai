@@ -6,7 +6,7 @@ from base_plugin import BasePlugin, HookResult
 from android_utils import log, run_on_ui_thread
 from client_utils import run_on_queue
 from file_utils import get_plugins_dir
-from ui.settings import Switch
+from ui.settings import Switch, Header
 
 from android.media import AudioManager, MediaPlayer
 from android.content import Context
@@ -69,6 +69,7 @@ class MoaiReactionPlugin(BasePlugin):
 
     def create_settings(self):
         return [
+            Header(text="Moai Reaction Sound"),
             Switch(
                 key="force_max_volume",
                 text="Force max volume",
