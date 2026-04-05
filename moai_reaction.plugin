@@ -6,6 +6,7 @@ from base_plugin import BasePlugin, HookResult
 from android_utils import log, run_on_ui_thread
 from client_utils import run_on_queue
 from file_utils import get_plugins_dir
+from ui.settings import Switch
 
 from android.media import AudioManager, MediaPlayer
 from android.content import Context
@@ -27,18 +28,16 @@ SOUND_FILE = os.path.join(SOUND_DIR, "sound.mp3")
 SOUND_URL = "https://github.com/mburkasov/moai/releases/latest/download/sound.mp3"
 
 
-def _play_sound():
+def _play_sound(force_max_volume: bool):
     try:
         context = ApplicationLoader.applicationContext
         audio_manager = context.getSystemService(Context.AUDIO_SERVICE)
 
-        # Set media stream to max volume
+        original_vol = audio_manager.getStreamVolume(AudioManager.STREAM_MUSIC)
         max_vol = audio_manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        audio_manager.setStreamVolume(
-            AudioManager.STREAM_MUSIC,
-            max_vol,
-            0  # no UI flags
-        )
+
+        if force_max_volume:
+            audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, max_vol, 0)
 
         player = MediaPlayer()
         player.setAudioStreamType(AudioManager.STREAM_MUSIC)
@@ -49,6 +48,8 @@ def _play_sound():
         class OnComplete(dynamic_proxy(MediaPlayer.OnCompletionListener)):
             def onCompletion(self, mp):
                 mp.release()
+                if force_max_volume:
+                    audio_manager.setStreamVolume(AudioManager.STREAM_MUSIC, original_vol, 0)
 
         player.setOnCompletionListener(OnComplete())
         player.start()
@@ -61,11 +62,20 @@ class MoaiReactionPlugin(BasePlugin):
 
     def on_plugin_load(self):
         self.add_hook("TL_updateMessageReactions")
-        # msg_id -> last known moai count
         self._moai_counts = {}
         if not os.path.exists(SOUND_FILE):
             run_on_queue(self._download_sound)
         log("MoaiReaction: loaded")
+
+    def create_settings(self):
+        return [
+            Switch(
+                key="force_max_volume",
+                text="Force max volume",
+                description="Temporarily set volume to max when playing, then restore it",
+                default=True,
+            ),
+        ]
 
     def _download_sound(self):
         try:
@@ -105,7 +115,8 @@ class MoaiReactionPlugin(BasePlugin):
             self._moai_counts[msg_id] = new_count
 
             if new_count > old_count:
-                run_on_ui_thread(_play_sound)
+                force_max = self.get_setting("force_max_volume", True)
+                run_on_ui_thread(lambda: _play_sound(force_max))
 
         except Exception as e:
             log(f"MoaiReaction: error in update hook — {e}")
