@@ -89,16 +89,23 @@ class MoaiReactionPlugin(BasePlugin):
         return False
 
     def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
-        log(f"MoaiReaction: update — {update_name}")
         if update_name != "TL_updateMessageReactions":
             return HookResult()
 
         try:
             reactions = update.reactions
             if reactions is None:
+                log("MoaiReaction: reactions is None")
                 return HookResult()
 
+            results = reactions.results
+            log(f"MoaiReaction: got reaction update, results={results}")
+            if results:
+                for rc in results:
+                    log(f"MoaiReaction: reaction={rc.reaction}, emoticon={getattr(rc.reaction, 'emoticon', 'N/A')}")
+
             if self._has_moai(reactions):
+                log("MoaiReaction: moai found, playing sound")
                 run_on_ui_thread(_play_sound)
 
         except Exception as e:
