@@ -10,6 +10,7 @@ from file_utils import get_plugins_dir
 from android.media import AudioManager, MediaPlayer
 from android.content import Context
 from org.telegram.messenger import ApplicationLoader
+from java import dynamic_proxy
 
 __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
@@ -44,13 +45,13 @@ def _play_sound():
         player.setDataSource(SOUND_FILE)
         player.prepare()
         player.setVolume(1.0, 1.0)
+
+        class OnComplete(dynamic_proxy(MediaPlayer.OnCompletionListener)):
+            def onCompletion(self, mp):
+                mp.release()
+
+        player.setOnCompletionListener(OnComplete())
         player.start()
-
-        # Release player when done
-        def on_complete(mp):
-            mp.release()
-
-        player.setOnCompletionListener(on_complete)
         log("MoaiReaction: played sound")
     except Exception as e:
         log(f"MoaiReaction: failed to play sound — {e}")
