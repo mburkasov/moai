@@ -61,7 +61,8 @@ class MoaiReactionPlugin(BasePlugin):
 
     def on_plugin_load(self):
         self.add_hook("TL_updateMessageReactions")
-        self.add_hook("update", match_substring=True)  # catch-all to see all update names
+        # msg_id -> last known moai count
+        self._moai_counts = {}
         if not os.path.exists(SOUND_FILE):
             run_on_queue(self._download_sound)
         log("MoaiReaction: loaded")
@@ -75,19 +76,19 @@ class MoaiReactionPlugin(BasePlugin):
         except Exception as e:
             log(f"MoaiReaction: failed to download sound — {e}")
 
-    def _has_moai(self, reactions) -> bool:
-        """Return True if the reactions object contains a 🗿 emoji reaction."""
+    def _get_moai_count(self, reactions) -> int:
+        """Return the current 🗿 reaction count, or 0 if absent."""
         try:
             results = reactions.results
             if results is None:
-                return False
+                return 0
             for i in range(results.size()):
-                reaction = results.get(i).reaction
-                if getattr(reaction, "emoticon", None) == MOAI_EMOJI:
-                    return True
+                rc = results.get(i)
+                if getattr(rc.reaction, "emoticon", None) == MOAI_EMOJI:
+                    return int(rc.count)
         except Exception:
             pass
-        return False
+        return 0
 
     def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
         if update_name != "TL_updateMessageReactions":
@@ -96,18 +97,14 @@ class MoaiReactionPlugin(BasePlugin):
         try:
             reactions = update.reactions
             if reactions is None:
-                log("MoaiReaction: reactions is None")
                 return HookResult()
 
-            results = reactions.results
-            log(f"MoaiReaction: got reaction update, results={results}")
-            if results:
-                for i in range(results.size()):
-                    rc = results.get(i)
-                    log(f"MoaiReaction: reaction={rc.reaction}, emoticon={getattr(rc.reaction, 'emoticon', 'N/A')}")
+            msg_id = int(update.msg_id)
+            new_count = self._get_moai_count(reactions)
+            old_count = self._moai_counts.get(msg_id, 0)
+            self._moai_counts[msg_id] = new_count
 
-            if self._has_moai(reactions):
-                log("MoaiReaction: moai found, playing sound")
+            if new_count > old_count:
                 run_on_ui_thread(_play_sound)
 
         except Exception as e:
