@@ -3,7 +3,7 @@ import urllib.request
 
 from base_plugin import BasePlugin, HookResult, MethodHook
 from android_utils import log, run_on_ui_thread
-from client_utils import run_on_queue
+from client_utils import run_on_queue, get_last_fragment
 from file_utils import get_plugins_dir
 from hook_utils import find_class
 from ui.settings import Switch, Header, Divider
@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Sounds"
 __description__ = "Plays sounds for 🗿 reactions and messages containing 🗿"
 __author__ = "mikhail"
-__version__ = "1.5.3"
+__version__ = "1.5.4"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -179,11 +179,34 @@ class MoaiReactionPlugin(BasePlugin):
         try:
             message = update.message
             text = getattr(message, "message", "") or ""
-            log(f"MoaiReaction: checking text={repr(text)}, has_moai={MOAI_EMOJI in text}, sound_exists={os.path.exists(MESSAGE_SOUND_FILE)}")
             if MOAI_EMOJI not in text:
                 return HookResult()
+
+            # Only play for the currently open chat
+            fragment = get_last_fragment()
+            if fragment is None:
+                return HookResult()
+            from org.telegram.ui import ChatActivity
+            if not isinstance(fragment, ChatActivity):
+                return HookResult()
+            open_dialog_id = fragment.getDialogId()
+            msg_peer = getattr(message, "peer_id", None)
+            if msg_peer is None:
+                return HookResult()
+            # Compute dialog id from peer
+            chat_id = getattr(msg_peer, "chat_id", 0) or 0
+            channel_id = getattr(msg_peer, "channel_id", 0) or 0
+            user_id = getattr(msg_peer, "user_id", 0) or 0
+            if channel_id:
+                msg_dialog_id = -channel_id
+            elif chat_id:
+                msg_dialog_id = -chat_id
+            else:
+                msg_dialog_id = user_id
+            if int(open_dialog_id) != int(msg_dialog_id):
+                return HookResult()
+
             is_own = self._is_own_message(message, account)
-            log(f"MoaiReaction: 🗿 message found, is_own={is_own}, play_on_own={self.get_setting('play_on_own_message', False)}")
             if is_own and not self.get_setting("play_on_own_message", False):
                 return HookResult()
             force_max = self.get_setting("force_max_volume", True)
