@@ -1,11 +1,11 @@
 import os
 import urllib.request
-from typing import Any
 
-from base_plugin import BasePlugin, HookResult
+from base_plugin import BasePlugin, HookResult, MethodHook
 from android_utils import log, run_on_ui_thread
 from client_utils import run_on_queue
 from file_utils import get_plugins_dir
+from hook_utils import find_class
 from ui.settings import Switch, Header
 
 from android.media import AudioManager, MediaPlayer
@@ -17,7 +17,7 @@ __id__ = "moai_reaction"
 __name__ = "Moai Reaction Sound"
 __description__ = "Plays a sound at max volume when someone reacts to your message with 🗿"
 __author__ = "mikhail"
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __icon__ = "DMJDuckX2/15"
 __min_version__ = "11.12.0"
 
@@ -61,11 +61,58 @@ def _play_sound(force_max_volume: bool):
 class MoaiReactionPlugin(BasePlugin):
 
     def on_plugin_load(self):
-        self.add_hook("TL_updateMessageReactions")
-        self._moai_counts = {}
         if not os.path.exists(SOUND_FILE):
             run_on_queue(self._download_sound)
+        self._hook_reaction_overlay()
         log("MoaiReaction: loaded")
+
+    def _hook_reaction_overlay(self):
+        try:
+            overlay_cls = find_class("org.telegram.ui.Components.Reactions.ReactionsEffectOverlay")
+            if overlay_cls is None:
+                log("MoaiReaction: ReactionsEffectOverlay not found, falling back to update hook")
+                self._setup_update_hook()
+                return
+
+            # Find the static show() method — it takes 9 params, we match by name
+            methods = overlay_cls.getDeclaredMethods()
+            show_method = None
+            for i in range(len(methods)):
+                m = methods[i]
+                if m.getName() == "show":
+                    show_method = m
+                    break
+
+            if show_method is None:
+                log("MoaiReaction: show() method not found, falling back to update hook")
+                self._setup_update_hook()
+                return
+
+            plugin = self
+
+            class ShowHook(MethodHook):
+                def before_hooked_method(self, param):
+                    try:
+                        # param.args[6] is the VisibleReaction
+                        reaction = param.args[6]
+                        emoticon = getattr(reaction, "emoticon", None)
+                        if emoticon == MOAI_EMOJI:
+                            force_max = plugin.get_setting("force_max_volume", True)
+                            run_on_ui_thread(lambda: _play_sound(force_max))
+                    except Exception as e:
+                        log(f"MoaiReaction: ShowHook error — {e}")
+
+            self.hook_method(show_method, ShowHook(self))
+            log("MoaiReaction: hooked ReactionsEffectOverlay.show()")
+
+        except Exception as e:
+            log(f"MoaiReaction: hook setup error — {e}, falling back to update hook")
+            self._setup_update_hook()
+
+    def _setup_update_hook(self):
+        """Fallback: use TL update hook with count-based deduplication."""
+        self.add_hook("TL_updateMessageReactions")
+        self._moai_counts = {}
 
     def create_settings(self):
         return [
@@ -88,8 +135,8 @@ class MoaiReactionPlugin(BasePlugin):
         except Exception as e:
             log(f"MoaiReaction: failed to download sound — {e}")
 
+    # Fallback update hook (only active if ReactionsEffectOverlay hook failed)
     def _get_moai_count(self, reactions) -> int:
-        """Return the current 🗿 reaction count, or 0 if absent."""
         try:
             results = reactions.results
             if results is None:
@@ -102,27 +149,24 @@ class MoaiReactionPlugin(BasePlugin):
             pass
         return 0
 
-    def on_update_hook(self, update_name: str, account: int, update: Any) -> HookResult:
+    def on_update_hook(self, update_name, account, update) -> HookResult:
         if update_name != "TL_updateMessageReactions":
             return HookResult()
-
         try:
             reactions = update.reactions
             if reactions is None:
                 return HookResult()
-
             msg_id = int(update.msg_id)
             new_count = self._get_moai_count(reactions)
-
-            if msg_id not in self._moai_counts:
-                # First time seeing this message — seed the cache silently
-                self._moai_counts[msg_id] = new_count
-            elif new_count > self._moai_counts[msg_id]:
-                self._moai_counts[msg_id] = new_count
+            counts = getattr(self, "_moai_counts", None)
+            if counts is None:
+                return HookResult()
+            if msg_id not in counts:
+                counts[msg_id] = new_count
+            elif new_count > counts[msg_id]:
+                counts[msg_id] = new_count
                 force_max = self.get_setting("force_max_volume", True)
                 run_on_ui_thread(lambda: _play_sound(force_max))
-
         except Exception as e:
-            log(f"MoaiReaction: error in update hook — {e}")
-
+            log(f"MoaiReaction: update hook error — {e}")
         return HookResult()
